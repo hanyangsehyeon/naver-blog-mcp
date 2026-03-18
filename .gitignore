@@ -1,1 +1,25 @@
+# Gemini CLI state
 .omg/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+
+# IDE and editor directories
+.vscode/
+.idea/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
