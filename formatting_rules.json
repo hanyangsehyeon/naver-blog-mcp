@@ -1,0 +1,30 @@
+{
+  "rules": [
+    {
+      "priority": 1,
+      "name": "핵심 키워드",
+      "description": "글의 제목이나 본문에서 가장 핵심적인 개념, 중요한 수치, 결론 문장",
+      "formats": ["highlight", "bold"],
+      "highlight_color": "#fff8b2"
+    },
+    {
+      "priority": 2,
+      "name": "중요 포인트",
+      "description": "두 번째로 강조할 내용, 주의사항, 팁, 핵심 단계",
+      "formats": ["text_color", "bold"],
+      "text_color": "#e53935"
+    },
+    {
+      "priority": 3,
+      "name": "강조 단어",
+      "description": "일반 강조, 키워드, 고유명사",
+      "formats": ["bold"]
+    }
+  ],
+  "constraints": {
+    "max_highlights_per_paragraph": 1,
+    "max_colored_text_per_paragraph": 1,
+    "max_bold_per_paragraph": 2,
+    "note": "형광펜/글자색 적용 시 반드시 볼드도 함께 적용"
+  }
+}

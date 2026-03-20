@@ -1,25 +1,24 @@
-# Gemini CLI state
-.omg/
-
-# Python bytecode
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Environment variables
+# Environment
 .env
 
-# IDE and editor directories
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Test artifacts (screenshots, logs)
+tests/*.png
+tests/result_*.txt
+
+# Generated data
+style_profile.json
+output/
+
+# IDE
 .vscode/
 .idea/
-
-# Test artifacts
-.pytest_cache/
-htmlcov/
-.coverage
-
-# Build artifacts
-dist/
-build/
-*.egg-info/
