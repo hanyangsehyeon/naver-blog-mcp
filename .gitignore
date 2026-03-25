@@ -18,6 +18,13 @@ tests/result_*.txt
 # Generated data
 style_profile.json
 output/
+examples/
+url_index/
+drafts/
+
+# Local config (machine-specific paths)
+.mcp.json
+input/
 
 # IDE
 .vscode/

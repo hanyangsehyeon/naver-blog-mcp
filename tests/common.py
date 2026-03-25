@@ -10,10 +10,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
-NAVER_ID  = os.getenv("NAVER_ID")
-NAVER_PW  = os.getenv("NAVER_PW")
-BLOG_ID   = os.getenv("BLOG_ID")    # blog to crawl for style analysis
-MY_BLOG_ID = os.getenv("MY_BLOG_ID")  # blog to write/publish to
+STANDARD_BLOG_ID = os.getenv("STANDARD_BLOG_ID")  # blog to crawl for style analysis
+MY_BLOG_ID       = os.getenv("MY_BLOG_ID")         # blog to write/publish to
 
 PASS, FAIL = "PASS", "FAIL"
 

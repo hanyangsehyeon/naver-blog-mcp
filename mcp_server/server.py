@@ -1,181 +1,141 @@
 """
-Naver Blog MCP Server
+Naver Blog MCP Server (FastMCP)
 Exposes tools: analyze_blog_style, get_style_profile, get_formatting_rules,
+               get_blog_categories, get_category_posts,
                read_file, save_output, publish_to_naver
 """
 import os, sys, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp import types
+from mcp.server.fastmcp import FastMCP
 
 from mcp_server.tools.file_tools import (
-    read_file, save_output, get_style_profile, get_formatting_rules
+    convert_hwpx, read_file, save_output, load_output, get_formatting_rules
 )
-from mcp_server.tools.blog_analyzer import analyze_blog_style
+from mcp_server.tools.blog_analyzer import (
+    fetch_post_urls, create_examples_from_index,
+    get_blog_categories, get_category_post_links
+)
 from mcp_server.tools.publisher import publish_to_naver
+
+mcp = FastMCP("naver-blog")
 
 # Lazy-loaded Selenium driver (created on first use, reused across calls)
 _driver = None
+_logged_in = False
 
-def get_driver():
+def _ensure_driver():
     global _driver
+    if _driver is not None:
+        try:
+            _ = _driver.window_handles  # raises if session is dead
+        except Exception:
+            _driver = None
     if _driver is None:
-        from tests.common import make_driver, login_with_qr
+        from tests.common import make_driver
         _driver = make_driver(headless=False)
-        login_with_qr(_driver)
     return _driver
 
+def get_driver():
+    """Driver without login — for public page access (URL collection, crawling)."""
+    return _ensure_driver()
 
-app = Server("naver-blog")
-
-
-@app.list_tools()
-async def list_tools() -> list[types.Tool]:
-    return [
-        types.Tool(
-            name="analyze_blog_style",
-            description=(
-                "Crawl the user's Naver blog to learn their formatting style. "
-                "Extracts bold/highlight/text-color examples and saves style_profile.json. "
-                "Run this once before publishing to capture color preferences."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "blog_id": {"type": "string", "description": "Naver blog ID to analyze"},
-                    "post_count": {"type": "integer", "description": "Number of recent posts to crawl (default 10)", "default": 10},
-                },
-                "required": ["blog_id"],
-            },
-        ),
-        types.Tool(
-            name="get_style_profile",
-            description="Return contents of style_profile.json (null if not yet generated).",
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        types.Tool(
-            name="get_formatting_rules",
-            description=(
-                "Return the user's formatting_rules.json — priority rules for when to apply "
-                "highlight / text_color / bold."
-            ),
-            inputSchema={"type": "object", "properties": {}},
-        ),
-        types.Tool(
-            name="read_file",
-            description="Read a raw text file from the input/ directory.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string", "description": "Filename inside input/"},
-                },
-                "required": ["filename"],
-            },
-        ),
-        types.Tool(
-            name="save_output",
-            description="Save transformed paragraph JSON to output/ for debugging.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string"},
-                    "content": {"type": "object"},
-                },
-                "required": ["filename", "content"],
-            },
-        ),
-        types.Tool(
-            name="publish_to_naver",
-            description=(
-                "Open Naver Blog editor, input title + formatted paragraphs, and save as draft. "
-                "Does NOT publish — user reviews and publishes manually. "
-                "Each paragraph may include formatting: bold, highlight (bg color), text_color."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "blog_id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "paragraphs": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "text": {"type": "string"},
-                                "formatting": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "type": {"type": "string", "enum": ["bold", "highlight", "text_color"]},
-                                            "start": {"type": "integer"},
-                                            "end": {"type": "integer"},
-                                            "color": {"type": "string"},
-                                        },
-                                        "required": ["type", "start", "end"],
-                                    },
-                                },
-                            },
-                            "required": ["text"],
-                        },
-                    },
-                },
-                "required": ["blog_id", "title", "paragraphs"],
-            },
-        ),
-    ]
+def get_driver_logged_in():
+    """Driver with QR login — required for publishing."""
+    global _logged_in
+    driver = _ensure_driver()
+    if not _logged_in:
+        from tests.common import login_with_qr
+        login_with_qr(driver)
+        _logged_in = True
+    return driver
 
 
-@app.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    def ok(data) -> list[types.TextContent]:
-        return [types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False, indent=2))]
+@mcp.tool()
+def tool_fetch_post_urls(blog_id: str, categories: list[str] = None) -> str:
+    """Fetch post URLs from a blog and save to url_index/{blog_id}.json.
+    If categories is specified, fetches only those categories (merges with existing index).
+    If categories is None, fetches all categories.
+    Run tool_get_blog_categories first to see available category names."""
+    driver = get_driver()
+    result = fetch_post_urls(driver, blog_id, categories)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
-    def err(msg: str) -> list[types.TextContent]:
-        return [types.TextContent(type="text", text=json.dumps({"error": msg}, ensure_ascii=False))]
 
-    try:
-        if name == "get_style_profile":
-            return ok(get_style_profile())
+@mcp.tool()
+def tool_create_examples(blog_id: str, categories: list[str] = None) -> str:
+    """Load url_index/{blog_id}.json, crawl posts from specified categories,
+    save each as examples/{category}/YYYYMMDD.json for few-shot prompting.
+    If categories is None, process all categories in the index."""
+    driver = get_driver()
+    result = create_examples_from_index(driver, blog_id, categories)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
-        elif name == "get_formatting_rules":
-            return ok(get_formatting_rules())
 
-        elif name == "read_file":
-            return ok({"content": read_file(arguments["filename"])})
+@mcp.tool()
+def tool_get_formatting_rules() -> str:
+    """Return the user's formatting_rules.json — priority rules for when to apply
+    highlight / text_color / bold."""
+    return json.dumps(get_formatting_rules(), ensure_ascii=False, indent=2)
 
-        elif name == "save_output":
-            path = save_output(arguments["filename"], arguments["content"])
-            return ok({"saved_to": path})
 
-        elif name == "analyze_blog_style":
-            driver = get_driver()
-            profile = analyze_blog_style(
-                driver,
-                blog_id=arguments["blog_id"],
-                post_count=arguments.get("post_count", 10),
-            )
-            return ok(profile)
+@mcp.tool()
+def tool_convert_hwpx(filename: str) -> str:
+    """Convert a .hwpx file from input/ to .txt in drafts/.
+    filename: e.g. '글감.hwpx'
+    Returns the saved txt file path."""
+    path = convert_hwpx(filename)
+    return json.dumps({"saved_to": path})
 
-        elif name == "publish_to_naver":
-            driver = get_driver()
-            result = publish_to_naver(
-                driver,
-                blog_id=arguments["blog_id"],
-                title=arguments["title"],
-                paragraphs=arguments["paragraphs"],
-            )
-            return ok(result)
 
-        else:
-            return err(f"unknown tool: {name}")
+@mcp.tool()
+def tool_read_file(filename: str) -> str:
+    """Read a .txt file from the drafts/ directory."""
+    return read_file(filename)
 
-    except Exception as e:
-        return err(str(e))
+
+@mcp.tool()
+def tool_save_output(filename: str, content: dict) -> str:
+    """Save transformed paragraph JSON to output/ for debugging."""
+    path = save_output(filename, content)
+    return json.dumps({"saved_to": path})
+
+
+@mcp.tool()
+def tool_get_blog_categories(blog_id: str) -> str:
+    """Return all categories of a Naver blog as {name: categoryNo} dict.
+    Use this before tool_get_category_posts to discover available category names."""
+    driver = get_driver()
+    result = get_blog_categories(driver, blog_id)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def tool_get_category_posts(blog_id: str, category_name: str) -> str:
+    """Navigate to a blog category via the main page UI, open the top list,
+    switch to 30줄 보기, and return up to 30 post links.
+    Returns list of {url, title}.
+    If category not found, returns error with list of available categories."""
+    driver = get_driver()
+    result = get_category_post_links(driver, blog_id, category_name)
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def tool_publish_to_naver(blog_id: str, title: str, paragraphs: list, from_output: str = "") -> str:
+    """Open Naver Blog editor for blog_id and save as draft.
+    IMPORTANT: Always confirm blog_id with the user before calling this tool.
+    Does NOT publish — user reviews and publishes manually.
+    If from_output is set (output/ filename), load title+paragraphs from that file instead of inline args.
+    Each paragraph: {text: str, formatting: [{type: bold|highlight|text_color, start: int, end: int, color?: str}]}"""
+    if from_output:
+        data = load_output(from_output)
+        title = data.get("title", title)
+        paragraphs = data.get("paragraphs", paragraphs)
+    driver = get_driver_logged_in()
+    result = publish_to_naver(driver, blog_id=blog_id, title=title, paragraphs=paragraphs)
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(stdio_server(app))
+    mcp.run()

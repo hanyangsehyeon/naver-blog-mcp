@@ -141,6 +141,11 @@ def publish_to_naver(driver, blog_id: str, title: str, paragraphs: list) -> dict
     Returns {"status": "saved", "url": current_url}.
     """
     driver.get(f"https://blog.naver.com/PostWriteForm.naver?blogId={blog_id}")
+    try:
+        WebDriverWait(driver, 3).until(EC.alert_is_present())
+        driver.switch_to.alert.accept()
+    except Exception:
+        pass
     WebDriverWait(driver, 20).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, ".se-text-paragraph"))
     )
@@ -158,39 +163,28 @@ def publish_to_naver(driver, blog_id: str, title: str, paragraphs: list) -> dict
     driver.switch_to.default_content()
     time.sleep(0.3)
 
-    # ── Body paragraphs ────────────────────────────────────────────────────────
-    for idx, para in enumerate(paragraphs):
-        text = para.get("text", "")
-        fmts = para.get("formatting", [])
+    # ── Body paragraphs: bulk paste as <div> blocks ────────────────────────────
+    # Pasting all paragraphs at once as <div> blocks prevents formatting bleed
+    # between paragraphs (per-paragraph paste+RETURN causes style inheritance).
+    bulk_html = "".join(
+        f"<div>{_build_html(p.get('text', ''), p.get('formatting', []))}</div>"
+        for p in paragraphs
+    )
+    bulk_plain = "\n".join(p.get("text", "") for p in paragraphs)
 
-        # Focus paragraph: click .se-text-paragraph, switch to body iframe
-        _dismiss_popups(driver)
-        paras_els = driver.find_elements(By.CSS_SELECTOR, ".se-text-paragraph")
-        target = paras_els[-1]  # always append to last paragraph
-        ActionChains(driver).move_to_element(target).click().perform()
-        time.sleep(0.4)
-        _dismiss_popups(driver)
+    _dismiss_popups(driver)
+    paras_els = driver.find_elements(By.CSS_SELECTOR, ".se-text-paragraph")
+    ActionChains(driver).move_to_element(paras_els[-1]).click().perform()
+    time.sleep(0.4)
+    _dismiss_popups(driver)
 
-        iframe = driver.find_element(By.CSS_SELECTOR, "iframe[id^='input_buffer']")
-        driver.switch_to.frame(iframe)
-        body = driver.find_element(By.TAG_NAME, "body")
-        body.send_keys(Keys.END)
-        time.sleep(0.1)
-
-        if fmts:
-            html = _build_html(text, fmts)
-            _html_paste(driver, html, text)
-        else:
-            body.send_keys(text)
-            time.sleep(0.3)
-
-        # Add newline between paragraphs (not after the last one)
-        if idx < len(paragraphs) - 1:
-            body.send_keys(Keys.RETURN)
-            time.sleep(0.2)
-
-        driver.switch_to.default_content()
-        time.sleep(0.2)
+    iframe = driver.find_element(By.CSS_SELECTOR, "iframe[id^='input_buffer']")
+    driver.switch_to.frame(iframe)
+    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
+    time.sleep(0.1)
+    _html_paste(driver, bulk_html, bulk_plain)
+    driver.switch_to.default_content()
+    time.sleep(0.5)
 
     # ── Draft save ─────────────────────────────────────────────────────────────
     _dismiss_popups(driver)
